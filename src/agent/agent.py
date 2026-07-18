@@ -16,8 +16,10 @@ from typing import Callable
 
 from src.agent.journal import Journal
 from src.agent.node import Node
+from src.agent.schemas import ExecutionEvaluation
 from src.interpreter.interpreter import ExecutionResult
 from src.llm.backend import LLMBackend
+from src.llm.structured import generate_structured
 from src.utils.data_preview import data_preview_generate
 from src.utils.text_processing import extract_code, extract_text_up_to_code, wrap_code
 
@@ -150,48 +152,49 @@ class Agent:
         self.journal.append(result_node)
 
     def parse_exec_result(self, node: Node, exec_result: ExecutionResult) -> None:
-        """
-        Judge whether the executed code is buggy and extract its metric.
+        """Judge whether the executed code is buggy and extract its metric.
 
-        TODO(structured-eval): currently this calls the LLM but ignores its
-        response and just hardcodes `is_buggy = False, metric = 0.0`. A
-        much stronger version:
-            1. Use a structured-output method (Pydantic + instructor, or
-               native JSON mode / function calling) so the LLM returns
-               {"is_buggy": bool, "metric": float | None, "summary": str}
-               directly instead of free text you have to regex out.
-            2. Set node.is_buggy = (response.is_buggy or node.exc_type is
-               not None or response.metric is None), and node.metric =
-               response.metric, node.analysis = response.summary.
-        This is the single highest-value TODO in the whole pipeline —
-        without real evaluation, greedy search and the metric history are
-        meaningless.
+        Uses a structured LLM call (see src/llm/structured.py) so the model
+        returns a validated ExecutionEvaluation object instead of free text
+        we'd have to regex out. The final is_buggy decision combines the
+        LLM judgement with two hard signals we already have for free:
+        node.exc_type is not None means the interpreter caught an
+        exception, so it is unconditionally buggy regardless of what the
+        LLM thinks; evaluation.metric is None means the LLM could not
+        find or verify a metric, which we also treat as buggy.
         """
         node.absorb_exec_result(exec_result)
 
-        system_prompt = "You are an AI assistant."
-        user_prompt = " ".join(
-            [
-                f"""
-            The task is:
-            {self.cfg.task_goal}
-
-            The code implementation is:
-            {wrap_code(node.code)}
-
-            The execution output is:
-            {wrap_code(node.term_out, lang="")}
-            """
-            ]
+        system_prompt = (
+            "You are an AI assistant that evaluates the output of a "
+            "machine learning code execution. Judge honestly and "
+            "conservatively: if you are not sure the code succeeded, or "
+            "you cannot find a validation metric in the output, mark it "
+            "as buggy."
+        )
+        user_prompt = (
+            f"The task is:\n{self.cfg.task_goal}\n\n"
+            f"The code implementation is:\n{wrap_code(node.code)}\n\n"
+            f'The execution output is:\n{wrap_code(node.term_out, lang="")}'
         )
 
-        # NOTE: response is currently unused — see TODO above.
-        self.llm.generate_response(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-        )
+        try:
+            evaluation = generate_structured(
+                llm=self.llm,
+                system_message=system_prompt,
+                user_message=user_prompt,
+                response_model=ExecutionEvaluation,
+            )
+        except ValueError as e:
+            node.is_buggy = True
+            node.metric = None
+            node.analysis = f"Evaluation failed: {e}"
+            return
 
-        node.is_buggy = False
-        node.metric = 0.0
+        node.is_buggy = (
+            node.exc_type is not None
+            or evaluation.is_buggy
+            or evaluation.metric is None
+        )
+        node.metric = evaluation.metric if not node.is_buggy else None
+        node.analysis = evaluation.summary
