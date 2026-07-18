@@ -73,20 +73,19 @@ python -m pytest tests/
 
 ## Known limitations / roadmap
 
-This refactor intentionally keeps the original assignment's simplified
-evaluation logic so the structure is easy to review. The main directions
-for extending it into a stronger agent:
-
-- **Real evaluation** (`Agent.parse_exec_result`): replace the current
-  hardcoded `is_buggy=False, metric=0.0` with structured output from the
-  LLM (e.g. via Pydantic + function calling) so bug detection and metric
-  extraction are actually driven by the model's judgement.
-- **Smarter search** (`Agent.search_policy`): replace the random
-  debug/improve choice with a proper tree search (UCB1 / MCTS-style),
-  balancing exploration of new approaches against exploiting the current
-  best.
-- **Reflection step**: add a "critic" LLM pass between drafting and
-  execution to catch obvious issues before spending an execution budget.
+- ✅ **Real evaluation** (`Agent.parse_exec_result`): now uses structured
+  LLM output (Pydantic schema + JSON-mode prompting with validation
+  retries, see `src/llm/structured.py`) instead of a hardcoded stub. Bug
+  detection combines the LLM's judgement with a hard rule (an actual
+  interpreter exception always overrides the LLM into "buggy").
+- ✅ **Smarter search** (`Agent.search_policy`): node selection for
+  "improve" now uses a UCB1-style score (`Agent._ucb_score`) balancing
+  the node's metric against how much its branch has already been
+  explored (`Node.subtree_size` as a visit-count proxy), instead of
+  always greedily picking the single best metric seen so far.
+- **Reflection step** (not yet done): add a "critic" LLM pass between
+  drafting and execution to catch obvious issues before spending an
+  execution budget.
 - **Multi-backend LLM support**: `src/llm/backend.py` defines the
   interface and has commented-out stubs for OpenAI/Anthropic backends —
   wiring these up would let the agent run without a local GPU.

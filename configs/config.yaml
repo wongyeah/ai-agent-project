@@ -20,5 +20,7 @@ llm:
 agent:
   steps: 1                # number of search iterations to run
   search:
-    debug_prob: 0.5        # probability of debugging a buggy node vs improving the best one
-    num_drafts: 1           # number of initial drafts before improving/debugging
+    debug_prob: 0.5              # probability of debugging a buggy node vs improving one
+    num_drafts: 1                 # number of initial drafts before improving/debugging
+    exploration_constant: 1.0     # UCB1 exploration weight: higher = more exploration of
+                                   # less-developed branches, lower = more greedy exploitation

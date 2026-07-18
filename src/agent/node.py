@@ -85,3 +85,14 @@ class Node(DataClassJsonMixin):
         if self.stage_name != "debug":
             return 0
         return self.parent.debug_depth + 1
+
+    @property
+    def subtree_size(self) -> int:
+        """
+        Number of nodes in the subtree rooted at this node (including
+        itself). Used as a proxy for "how much this branch has already
+        been explored" in UCB-style node selection — since we don't
+        re-evaluate the same node multiple times (unlike classic MCTS
+        rollouts), the number of descendants stands in for visit count.
+        """
+        return 1 + sum(child.subtree_size for child in self.children)

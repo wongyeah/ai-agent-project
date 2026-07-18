@@ -11,6 +11,7 @@ This is where most of the interesting "AI agent" design decisions live:
       (buggy? what's the metric?) via another LLM call.
 """
 
+import math
 import random
 from typing import Callable
 
@@ -33,18 +34,44 @@ class Agent:
         self.llm = llm
         self.data_preview: str | None = None
 
+    def _node_value(self, node: Node) -> float:
+        """
+        Convert a node's metric into a "higher is better" value in (0, 1].
+
+        node.metric is Mean Squared Error (lower is better), so we can't
+        use it directly in a UCB score, which expects "bigger number =
+        better". This is a simple monotonic inversion.
+
+        TODO(generalize): this hardcodes "lower MSE is better". If this
+        project is extended to tasks with different metrics (e.g.
+        accuracy, where higher is better), make the direction configurable
+        instead of assuming MSE everywhere.
+        """
+        return 1.0 / (1.0 + node.metric)
+
+    def _ucb_score(self, node: Node, total_nodes: int, exploration_constant: float) -> float:
+        """
+        UCB1-style score balancing exploitation (how good this node's
+        result looks) against exploration (how little this branch has
+        been developed so far, using subtree_size as a visit-count proxy).
+        """
+        exploitation = self._node_value(node)
+        visits = node.subtree_size
+        exploration = exploration_constant * math.sqrt(math.log(total_nodes) / visits)
+        return exploitation + exploration
+
     def search_policy(self) -> Node | None:
         """
         Select a node to work on (or None to draft a new node).
 
-        TODO(search-strategy): this is currently a simple heuristic
-        (random debug-vs-improve choice, then greedy on the best node).
-        A stronger version of this project would replace it with a
-        proper tree search, e.g.:
-            - UCB1 score per node: metric_estimate + c * sqrt(ln(N) / n_i)
-            - or MCTS with a rollout/simulation step
-        which is a much better "algorithms" story for interviews than
-        the current random policy.
+        Buggy leaf nodes are debugged with probability `debug_prob` — bugs
+        need fixing regardless of "how promising" the branch looked, so
+        this part stays a simple probability check rather than a UCB
+        choice. Otherwise, among all non-buggy ("good") nodes, we pick one
+        to improve using a UCB1 score, rather than always greedily picking
+        the single best metric seen so far. This lets the agent
+        occasionally revisit less-explored but still-valid branches
+        instead of over-committing to one early success.
         """
         search_cfg = self.cfg.agent.search
 
@@ -60,7 +87,12 @@ class Agent:
         if not good_nodes:
             return None
 
-        return self.journal.get_best_node()
+        total_nodes = len(self.journal)
+        exploration_constant = getattr(search_cfg, "exploration_constant", 1.0)
+        return max(
+            good_nodes,
+            key=lambda n: self._ucb_score(n, total_nodes, exploration_constant),
+        )
 
     def plan_and_code_query(
         self, system_message: str, user_message: str, retries: int = 3
