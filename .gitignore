@@ -1,0 +1,20 @@
+# data & models (large files, shouldn't go in git)
+data/*
+!data/.gitkeep
+models/
+*.gguf
+
+# run outputs
+runs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/

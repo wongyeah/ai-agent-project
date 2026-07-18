@@ -1,0 +1,24 @@
+# Example task configuration for the coding agent.
+# Edit this file (or make a copy) rather than hardcoding values in main.py.
+
+exp_name: "ML2025_HW2"
+data_dir: "data/ML2025Spring-hw2-public"
+
+task_goal: >
+  Given the survey results from the past two days in a specific state in
+  the U.S., predict the probability of testing positive on day 3.
+  The evaluation metric is Mean Squared Error (MSE).
+
+llm:
+  backend: "llama_cpp"          # llama_cpp | openai | anthropic (see src/llm/backend.py)
+  model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 8192
+  max_tokens: 4096
+  temperature: 0.0
+
+agent:
+  steps: 1                # number of search iterations to run
+  search:
+    debug_prob: 0.5        # probability of debugging a buggy node vs improving the best one
+    num_drafts: 1           # number of initial drafts before improving/debugging

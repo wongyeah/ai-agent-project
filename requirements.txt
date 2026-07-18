@@ -1,0 +1,18 @@
+dataclasses_json==0.6.4
+shutup==0.2.0
+humanize
+pandas
+numpy
+torch
+pyyaml
+pydantic
+
+# Local LLM backend (see src/llm/backend.py). Install with the appropriate
+# --extra-index-url for your CUDA version, e.g.:
+#   pip install llama-cpp-python==0.3.4 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122
+llama-cpp-python==0.3.4
+
+# Optional, for future hosted-LLM backends:
+# openai
+# anthropic
+# instructor
