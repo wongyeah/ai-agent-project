@@ -7,11 +7,26 @@ each call to `Interpreter.run()` writes the given code to a file, runs it
 in a subprocess, and streams stdout/stderr back through queues while
 enforcing a timeout.
 
-TODO(security): this only isolates via a separate process. For a
-resume-grade "safe agent execution" story, consider adding:
-    - resource limits (memory/CPU) via `resource.setrlimit`
-    - filesystem restrictions (e.g. chroot, or run inside a throwaway dir)
-    - no-network execution (e.g. run inside a container with network disabled)
+Sandbox hardening (on top of plain process isolation):
+    - Memory limit (RLIMIT_AS): the OS kills allocations past this, which
+      surfaces as a normal Python MemoryError caught by our exec() handler.
+    - CPU time limit (RLIMIT_CPU): the OS sends SIGXCPU past this, which we
+      catch via a signal handler and turn into a clean ResourceLimitExceeded
+      exception instead of an abrupt process kill.
+    - Best-effort network blocking: monkeypatches `socket.socket` inside the
+      child process so any attempt to open a network connection raises
+      immediately, rather than silently phoning home.
+
+Platform note: `resource.setrlimit` is POSIX-only (Linux/Mac) — it does not
+exist on Windows. On Windows, memory/CPU limits are silently skipped (with
+a one-time warning); this project's actual execution environment (e.g.
+Google Colab) is Linux, so this only matters if you try to run the agent
+loop itself on a Windows machine, not for developing/testing this code.
+
+None of this is a substitute for real container-level isolation (e.g.
+gVisor, Docker with --network=none and cgroup limits) in a production
+system — it's a lightweight, dependency-free layer of defense appropriate
+for a single-user local/Colab environment.
 """
 
 import os
@@ -26,6 +41,17 @@ from multiprocessing import Process, Queue
 import humanize
 import shutup
 from dataclasses_json import DataClassJsonMixin
+
+try:
+    import resource
+
+    _HAS_RESOURCE = True
+except ImportError:  # pragma: no cover - exercised only on Windows
+    _HAS_RESOURCE = False
+
+
+class ResourceLimitExceeded(Exception):
+    """Raised inside the child process when a CPU time limit is hit."""
 
 
 @dataclass
@@ -74,17 +100,77 @@ class RedirectQueue:
         pass
 
 
+def _block_network() -> None:
+    """
+    Best-effort network blocking for the child process: monkeypatch
+    `socket.socket` so any attempt to construct one raises immediately.
+    This covers the vast majority of Python HTTP/networking libraries
+    (requests, urllib, etc.), since they all eventually create a raw
+    socket. It's not a kernel-level guarantee (a determined process could
+    still route around it), but it stops accidental/naive network calls
+    from LLM-generated code at zero infrastructure cost.
+    """
+    import socket
+
+    def _blocked_init(self, *args, **kwargs):
+        raise PermissionError(
+            "Network access is disabled inside the code execution sandbox."
+        )
+
+    socket.socket.__init__ = _blocked_init
+
+
+def _handle_cpu_limit(signum, frame) -> None:
+    raise ResourceLimitExceeded("CPU time limit exceeded")
+
+
 class Interpreter:
     """Simulates a standalone Python REPL with an execution time limit."""
 
-    def __init__(self, timeout: int = 3600, agent_file_name: str = "runfile.py"):
+    def __init__(
+        self,
+        timeout: int = 3600,
+        agent_file_name: str = "runfile.py",
+        max_memory_mb: int | None = 4096,
+        max_cpu_seconds: int | None = None,
+        block_network: bool = True,
+    ):
         self.timeout = timeout
         self.agent_file_name = agent_file_name
+        self.max_memory_mb = max_memory_mb
+        self.max_cpu_seconds = max_cpu_seconds
+        self.block_network = block_network
         self.process: Process | None = None
+
+        if (max_memory_mb is not None or max_cpu_seconds is not None) and not _HAS_RESOURCE:
+            print(
+                "Warning: memory/CPU limits were requested but the `resource` "
+                "module isn't available on this platform (Windows). Limits "
+                "will not be enforced."
+            )
 
     def child_proc_setup(self, result_outq: Queue) -> None:
         shutup.mute_warnings()
         sys.stdout = sys.stderr = RedirectQueue(result_outq)
+
+        if _HAS_RESOURCE:
+            if self.max_memory_mb is not None:
+                max_bytes = self.max_memory_mb * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (max_bytes, max_bytes))
+            if self.max_cpu_seconds is not None:
+                # Soft limit == hard limit would give the kernel no room to
+                # deliver SIGXCPU before force-killing the process with
+                # SIGKILL — leave a 1-second buffer so our signal handler
+                # actually gets a chance to run and raise a catchable
+                # exception instead of the process just vanishing.
+                resource.setrlimit(
+                    resource.RLIMIT_CPU,
+                    (self.max_cpu_seconds, self.max_cpu_seconds + 1),
+                )
+                signal.signal(signal.SIGXCPU, _handle_cpu_limit)
+
+        if self.block_network:
+            _block_network()
 
     def _run_session(self, code_inq: Queue, result_outq: Queue, event_outq: Queue) -> None:
         self.child_proc_setup(result_outq)

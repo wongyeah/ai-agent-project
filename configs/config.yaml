@@ -30,3 +30,9 @@ agent:
     num_drafts: 1                 # number of initial drafts before improving/debugging
     exploration_constant: 1.0     # UCB1 exploration weight: higher = more exploration of
                                    # less-developed branches, lower = more greedy exploitation
+
+interpreter:
+  timeout: 3600                 # max wall-clock seconds for a single code execution
+  max_memory_mb: 4096            # hard memory cap for the child process (POSIX only)
+  max_cpu_seconds: null          # hard CPU-time cap (POSIX only); null = no separate CPU limit
+  block_network: true            # best-effort: block socket creation in generated code

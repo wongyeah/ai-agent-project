@@ -69,7 +69,12 @@ def main():
     llm = build_llm_backend(cfg)
     journal = Journal()
     agent = Agent(cfg=cfg, journal=journal, llm=llm)
-    interpreter = Interpreter()
+    interpreter = Interpreter(
+        timeout=cfg.interpreter.timeout,
+        max_memory_mb=cfg.interpreter.max_memory_mb,
+        max_cpu_seconds=cfg.interpreter.max_cpu_seconds,
+        block_network=cfg.interpreter.block_network,
+    )
 
     def exec_callback(*call_args, **call_kwargs):
         return interpreter.run(*call_args, **call_kwargs)

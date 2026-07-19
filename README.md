@@ -109,10 +109,15 @@ python -m pytest tests/
   a working `OpenAIBackend` (the default) alongside the local
   `LlamaCppBackend`. An `AnthropicBackend` stub is sketched in comments
   for anyone wanting to add it.
-- **Sandbox hardening** (not yet done): the `Interpreter` isolates
-  execution in a subprocess but doesn't yet enforce memory/CPU/network
-  limits; running it in a disposable container would be a more
-  production-realistic execution sandbox.
+- ✅ **Sandbox hardening**: the `Interpreter` now enforces a memory cap
+  (`RLIMIT_AS`) and an optional CPU-time cap (`RLIMIT_CPU`, via a
+  `SIGXCPU` handler that turns into a clean `ResourceLimitExceeded`
+  exception rather than an abrupt kill) on POSIX systems, plus best-effort
+  network blocking (monkeypatches `socket.socket` in the child process).
+  Not a substitute for real container isolation in production, but a
+  meaningful, dependency-free layer of defense for a local/Colab
+  environment — see `src/interpreter/interpreter.py` for the platform
+  caveats (POSIX-only for the resource limits).
 
 ## Credit
 
