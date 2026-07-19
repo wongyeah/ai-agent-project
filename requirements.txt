@@ -6,13 +6,12 @@ numpy
 torch
 pyyaml
 pydantic
+python-dotenv
 
-# Local LLM backend (see src/llm/backend.py). Install with the appropriate
-# --extra-index-url for your CUDA version, e.g.:
-#   pip install llama-cpp-python==0.3.4 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122
-llama-cpp-python==0.3.4
+# Cloud LLM backend (default, see src/llm/backend.py). Requires the
+# OPENAI_API_KEY environment variable to be set.
+openai
 
-# Optional, for future hosted-LLM backends:
-# openai
-# anthropic
-# instructor
+# Optional, only needed if you switch llm.backend to "llama_cpp" in
+# configs/config.yaml to run a local GGUF model instead:
+# llama-cpp-python==0.3.4  (install with --extra-index-url for your CUDA version)

@@ -1,3 +1,6 @@
+# secrets — never commit real API keys
+.env
+
 # data & models (large files, shouldn't go in git)
 data/*
 !data/.gitkeep

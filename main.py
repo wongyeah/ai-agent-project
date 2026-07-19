@@ -12,11 +12,12 @@ import json
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 from src.agent.agent import Agent
 from src.agent.journal import Journal
 from src.interpreter.interpreter import Interpreter
-from src.llm.backend import LlamaCppBackend
+from src.llm.backend import LlamaCppBackend, OpenAIBackend
 from src.utils.config import Config, set_seed
 
 
@@ -30,8 +31,14 @@ def build_llm_backend(cfg: Config):
             max_tokens=cfg.llm.max_tokens,
             temperature=cfg.llm.temperature,
         )
-    # TODO(multi-backend): wire up OpenAIBackend / AnthropicBackend here
-    # once implemented in src/llm/backend.py.
+    if backend == "openai":
+        return OpenAIBackend(
+            model=cfg.llm.model,
+            max_tokens=cfg.llm.max_tokens,
+            temperature=cfg.llm.temperature,
+        )
+    # TODO(multi-backend): wire up AnthropicBackend here once implemented
+    # in src/llm/backend.py.
     raise ValueError(f"Unknown llm backend: {backend}")
 
 
@@ -44,6 +51,11 @@ def save_run(cfg: Config, journal: Journal, out_dir: str = "runs") -> None:
 
 
 def main():
+    # Loads variables from a local .env file (if present) into the process
+    # environment — e.g. OPENAI_API_KEY. Never overwrites a variable that's
+    # already set in the shell, so `export`/`$env:` still takes priority.
+    load_dotenv()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/config.yaml")
     args = parser.parse_args()

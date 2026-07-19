@@ -15,8 +15,9 @@ Given a task description and a directory of data, the agent:
 1. **Drafts** an initial plan + code solution via an LLM call.
 2. **Executes** the code in an isolated subprocess (`Interpreter`), capturing
    stdout/stderr/exceptions with a timeout.
-3. **Evaluates** the result — currently a stub (see `Agent.parse_exec_result`,
-   flagged as the top TODO), intended to judge bugginess and extract a metric.
+3. **Evaluates** the result via a structured LLM call (`Agent.parse_exec_result`),
+   judging bugginess and extracting a metric — combined with a hard rule
+   that any real interpreter exception always counts as buggy.
 4. Based on the search policy, either **debugs** a buggy solution, **improves**
    the current best one, or starts a fresh **draft** — repeating for a
    configured number of steps.
@@ -30,7 +31,7 @@ ai-agent-project/
 ├── configs/
 │   └── config.yaml       # task description, data dir, LLM + search settings
 ├── src/
-│   ├── llm/backend.py     # LLM backend interface (local GGUF now; OpenAI/Anthropic stubs)
+│   ├── llm/backend.py     # LLM backend interface (OpenAI by default; local GGUF supported too)
 │   ├── agent/
 │   │   ├── node.py         # a single solution attempt in the search tree
 │   │   ├── journal.py      # the full search tree + accessors
@@ -52,9 +53,25 @@ ai-agent-project/
 pip install -r requirements.txt
 ```
 
-Download a GGUF model (any model works, pick one from the
-[Open LLM Leaderboard](https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard)
-in GGUF format) and place its path in `configs/config.yaml` under `llm.model_path`.
+By default this project uses the OpenAI API (`configs/config.yaml` ->
+`llm.backend: "openai"`). Set your API key by copying `.env.example` to
+`.env` and filling in your real key:
+
+```bash
+cp .env.example .env
+# then edit .env and set OPENAI_API_KEY=sk-...
+```
+
+`.env` is gitignored — it will never be committed. `main.py` loads it
+automatically at startup via `python-dotenv`. (You can also set the
+environment variable directly in your shell instead if you prefer; either
+way works, and a shell-level variable takes priority over `.env`.)
+
+If you'd rather run a local model instead (e.g. no API budget, or want to
+experiment offline), set `llm.backend: "llama_cpp"` in the config, install
+`llama-cpp-python`, download a GGUF model (any model works — pick one from
+the [Open LLM Leaderboard](https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard)
+in GGUF format), and point `llm.model_path` at it.
 
 Put your task's train/test CSVs under `data/` and point `data_dir` in the
 config at that folder.
@@ -86,13 +103,14 @@ python -m pytest tests/
 - **Reflection step** (not yet done): add a "critic" LLM pass between
   drafting and execution to catch obvious issues before spending an
   execution budget.
-- **Multi-backend LLM support**: `src/llm/backend.py` defines the
-  interface and has commented-out stubs for OpenAI/Anthropic backends —
-  wiring these up would let the agent run without a local GPU.
-- **Sandbox hardening**: the `Interpreter` isolates execution in a
-  subprocess but doesn't yet enforce memory/CPU/network limits; running
-  it in a disposable container would be a more production-realistic
-  execution sandbox.
+- ✅ **Multi-backend LLM support** (partial): `src/llm/backend.py` now has
+  a working `OpenAIBackend` (the default) alongside the local
+  `LlamaCppBackend`. An `AnthropicBackend` stub is sketched in comments
+  for anyone wanting to add it.
+- **Sandbox hardening** (not yet done): the `Interpreter` isolates
+  execution in a subprocess but doesn't yet enforce memory/CPU/network
+  limits; running it in a disposable container would be a more
+  production-realistic execution sandbox.
 
 ## Credit
 

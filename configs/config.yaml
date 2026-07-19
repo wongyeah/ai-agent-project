@@ -10,12 +10,15 @@ task_goal: >
   The evaluation metric is Mean Squared Error (MSE).
 
 llm:
-  backend: "llama_cpp"          # llama_cpp | openai | anthropic (see src/llm/backend.py)
+  backend: "openai"             # openai | llama_cpp (see src/llm/backend.py)
+  model: "gpt-4o-mini"           # used when backend is "openai"
+  max_tokens: 4096
+  temperature: 0.0
+
+  # --- settings below only apply when backend is "llama_cpp" ---
   model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
   n_gpu_layers: -1
   n_ctx: 8192
-  max_tokens: 4096
-  temperature: 0.0
 
 agent:
   steps: 1                # number of search iterations to run

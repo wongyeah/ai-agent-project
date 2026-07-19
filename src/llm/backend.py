@@ -71,19 +71,41 @@ class LlamaCppBackend(LLMBackend):
         return output["choices"][0]["message"]["content"]
 
 
+class OpenAIBackend(LLMBackend):
+    """
+    Hosted LLM backend using the OpenAI API.
+
+    Requires the OPENAI_API_KEY environment variable to be set (the
+    OpenAI client reads it automatically — never hardcode API keys in
+    code or commit them to git).
+    """
+
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+    ):
+        # Imported lazily so the rest of the codebase doesn't require the
+        # `openai` package to be installed unless this backend is used.
+        from openai import OpenAI
+
+        self._client = OpenAI()
+        self._model = model
+        self._max_tokens = max_tokens
+        self._temperature = temperature
+
+    def generate_response(self, messages: list[dict[str, str]]) -> str:
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            max_tokens=self._max_tokens,
+            temperature=self._temperature,
+        )
+        return response.choices[0].message.content
+
+
 # TODO(multi-backend): implement additional backends, e.g.
-#
-# class OpenAIBackend(LLMBackend):
-#     def __init__(self, model: str = "gpt-4o-mini"):
-#         from openai import OpenAI
-#         self._client = OpenAI()
-#         self._model = model
-#
-#     def generate_response(self, messages):
-#         resp = self._client.chat.completions.create(
-#             model=self._model, messages=messages
-#         )
-#         return resp.choices[0].message.content
 #
 # class AnthropicBackend(LLMBackend):
 #     def __init__(self, model: str = "claude-sonnet-4-6"):
