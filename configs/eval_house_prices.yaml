@@ -1,0 +1,79 @@
+# Evaluation run config #3: Kaggle "House Prices - Advanced Regression
+# Techniques" — the "medium tier" dataset. 79 feature columns, real
+# missing-value/categorical-encoding decisions to make, and it has a
+# well-known public baseline range to cite (a plain linear regression
+# typically lands around RMSE(log price) ~0.15-0.20; a tuned gradient-
+# boosted model can get well under 0.13). This is the dataset where you'd
+# actually expect search + reflection to visibly outperform a single
+# one-shot LLM attempt, if they're doing anything at all — that's the
+# comparison this run exists to produce.
+#
+# Setup before running:
+#   1. Go to https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/data
+#      (free Kaggle account required, "Join Competition" first if
+#      prompted).
+#   2. Download train.csv and test.csv ONLY (skip data_description.txt
+#      and sample_submission.csv).
+#   3. Put them in: data/house-prices/train.csv and
+#      data/house-prices/test.csv — nothing else in that folder. Same
+#      reason as eval_titanic.yaml: data_preview_generate() calls
+#      pd.read_csv() on every file in data_dir unconditionally, and
+#      data_description.txt is not a CSV.
+#
+# Same note as eval_titanic.yaml: test.csv here has no ground-truth
+# SalePrice column, so the metric is self-reported by the generated code
+# from a held-out validation split of train.csv, not a real Kaggle
+# leaderboard submission.
+#
+# Usage:
+#   python main.py --config configs/eval_house_prices.yaml
+
+exp_name: "eval_house_prices"
+data_dir: "data/house-prices"
+
+task_goal: >
+  Given residential property data for homes in Ames, Iowa (79 explanatory
+  variables covering lot size, overall quality/condition, year built,
+  square footage, number of rooms, garage/basement details, etc.) in
+  train.csv, train a model to predict each home's final sale price. Hold
+  out a validation split from train.csv yourself to evaluate on (test.csv
+  has no ground-truth SalePrice column, so it cannot be used for scoring —
+  only for producing a final predictions file if you want one). The
+  evaluation metric is Root Mean Squared Error (RMSE) between the natural
+  log of your predicted price and the natural log of the true SalePrice
+  on your held-out validation split (this matches the competition's
+  official metric, which scores on log-price to avoid over-penalizing
+  errors on expensive homes).
+
+llm:
+  # Using Claude instead of OpenAI here (see .env.example -- needs
+  # ANTHROPIC_API_KEY, not OPENAI_API_KEY). claude-haiku-4-5 is the
+  # cheap/fast tier, same role gpt-4o-mini plays for OpenAI, so cost per
+  # run should be comparable.
+  backend: "anthropic"
+  model: "claude-haiku-4-5"
+  max_tokens: 4096
+  temperature: 0.0
+  model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 8192
+
+agent:
+  steps: 20
+  reflection:
+    enabled: true
+    max_revisions: 1
+  search:
+    debug_prob: 0.5
+    num_drafts: 3
+    exploration_constant: 1.0
+
+interpreter:
+  # Still a small dataset (~1460 rows), but 79 columns means more
+  # preprocessing/feature-engineering code and a higher chance of a slow
+  # grid search if the LLM gets ambitious. 300s gives that room without
+  # letting a single runaway step eat the whole budget.
+  timeout: 300
+  max_memory_mb: 4096
+  max_cpu_seconds: null
+  block_network: true

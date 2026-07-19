@@ -1,0 +1,75 @@
+# Evaluation run config #2: Kaggle "Titanic - Machine Learning from
+# Disaster" — the "easy tier" sanity-check dataset. Small, fast, and
+# there's essentially no feature engineering needed to get a decent
+# score, so this run mainly proves the pipeline works end-to-end and
+# gives you a fast (~minutes, not hours) result to point to.
+#
+# Setup before running:
+#   1. Go to https://www.kaggle.com/competitions/titanic/data (free Kaggle
+#      account required, "Join Competition" first if prompted).
+#   2. Download train.csv and test.csv ONLY.
+#   3. Put them in: data/titanic/train.csv and data/titanic/test.csv
+#      Do NOT put gender_submission.csv or any .txt files in this folder —
+#      src/utils/data_preview.py calls pd.read_csv() on every single file
+#      it finds in data_dir with no filtering, so a non-CSV file (or a CSV
+#      you don't want the agent to see) in there will either crash the
+#      preview step or feed the LLM a garbled/misleading preview. Keep
+#      data/titanic/ to exactly the two files above.
+#
+# IMPORTANT, read before writing your baseline/plotting scripts: Kaggle's
+# public test.csv has NO "Survived" column (that's the whole point of a
+# submission-based competition — Kaggle scores it server-side). This repo
+# doesn't submit to Kaggle at all: same as your ML2025_HW2 task, the
+# task_goal below asks the LLM-generated code to hold out its own
+# validation split from train.csv and self-report accuracy on that split
+# (Agent.parse_exec_result reads whatever metric number the generated code
+# prints). So the metric you'll be plotting is "accuracy on an internal
+# validation split", not an official Kaggle leaderboard score — say this
+# explicitly in your README write-up so nobody mistakes it for the latter.
+#
+# Usage:
+#   python main.py --config configs/eval_titanic.yaml
+
+exp_name: "eval_titanic"
+data_dir: "data/titanic"
+
+task_goal: >
+  Given passenger data from the Titanic disaster (ticket class, sex, age,
+  number of siblings/spouses and parents/children aboard, fare, port of
+  embarkation, etc.) in train.csv, train a model to predict whether a
+  passenger survived (1) or did not survive (0). Hold out a validation
+  split from train.csv yourself to evaluate on (test.csv has no ground-
+  truth labels, so it cannot be used for scoring — only for producing a
+  final predictions file if you want one). The evaluation metric is
+  classification Accuracy on your held-out validation split.
+
+llm:
+  # Using Claude instead of OpenAI here (see .env.example -- needs
+  # ANTHROPIC_API_KEY, not OPENAI_API_KEY). claude-haiku-4-5 is the
+  # cheap/fast tier, same role gpt-4o-mini plays for OpenAI, so cost per
+  # run should be comparable.
+  backend: "anthropic"
+  model: "claude-haiku-4-5"
+  max_tokens: 4096
+  temperature: 0.0
+  model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 8192
+
+agent:
+  steps: 15
+  reflection:
+    enabled: true
+    max_revisions: 1
+  search:
+    debug_prob: 0.5
+    num_drafts: 3
+    exploration_constant: 1.0
+
+interpreter:
+  # Titanic is ~900 rows; any reasonable sklearn model trains in seconds.
+  # 180s is already generous — tighten to fail faster on runaway code.
+  timeout: 180
+  max_memory_mb: 4096
+  max_cpu_seconds: null
+  block_network: true

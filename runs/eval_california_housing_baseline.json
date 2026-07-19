@@ -1,0 +1,6 @@
+{
+  "mse": 2388730260.2966533,
+  "exec_time": 8.537550687789917,
+  "code": "\nimport pandas as pd\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.ensemble import RandomForestRegressor\nfrom sklearn.metrics import mean_squared_error\n\ndf = pd.read_csv(\"data/california-housing/train.csv\")\n\ndf[\"total_bedrooms\"] = df[\"total_bedrooms\"].fillna(df[\"total_bedrooms\"].median())\ndf = pd.get_dummies(df, columns=[\"ocean_proximity\"], drop_first=True)\n\nX = df.drop(columns=[\"median_house_value\"])\ny = df[\"median_house_value\"]\n\nX_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=531)\n\nmodel = RandomForestRegressor(n_estimators=100, random_state=531)\nmodel.fit(X_train, y_train)\n\npreds = model.predict(X_val)\nmse = mean_squared_error(y_val, preds)\nprint(f\"VALIDATION_MSE={mse}\")\n",
+  "description": "One-shot baseline: single non-iterated code-generation attempt, no multi-round UCB search/execution-feedback loop. Standard first-draft approach (median-fill missing values, one-hot encode categorical, plain RandomForestRegressor(n_estimators=100) with no feature engineering, no hyperparameter tuning, no model comparison)."
+}

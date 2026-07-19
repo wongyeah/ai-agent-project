@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from src.agent.agent import Agent
 from src.agent.journal import Journal
 from src.interpreter.interpreter import Interpreter
-from src.llm.backend import LlamaCppBackend, OpenAIBackend
+from src.llm.backend import AnthropicBackend, CozeBackend, LlamaCppBackend, OpenAIBackend
 from src.utils.config import Config, set_seed
 
 
@@ -37,8 +37,21 @@ def build_llm_backend(cfg: Config):
             max_tokens=cfg.llm.max_tokens,
             temperature=cfg.llm.temperature,
         )
-    # TODO(multi-backend): wire up AnthropicBackend here once implemented
-    # in src/llm/backend.py.
+    if backend == "anthropic":
+        return AnthropicBackend(
+            model=cfg.llm.model,
+            max_tokens=cfg.llm.max_tokens,
+            temperature=cfg.llm.temperature,
+        )
+    if backend == "coze":
+        # llm.model doubles as the Coze bot_id here (Coze has no separate
+        # "model name" concept from the caller's side — see
+        # CozeBackend's docstring in src/llm/backend.py).
+        return CozeBackend(
+            bot_id=cfg.llm.model,
+            max_tokens=cfg.llm.max_tokens,
+            temperature=cfg.llm.temperature,
+        )
     raise ValueError(f"Unknown llm backend: {backend}")
 
 

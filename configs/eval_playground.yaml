@@ -1,0 +1,82 @@
+# Evaluation run config #4 (optional, do this one last if you have time):
+# a Kaggle "Playground Series" competition — the "hard-to-memorize" tier.
+#
+# Why this one matters beyond Titanic/House Prices: both of those are so
+# famous that an LLM may have memorized a near-optimal notebook for them
+# during pretraining and can just regurgitate it, with zero real search
+# needed. That makes them weak evidence that your agent's search/
+# reflection loop is doing anything. Playground Series datasets are
+# lightly synthetic and rotate every couple of weeks specifically so they
+# CAN'T be memorized — a good result there is much stronger evidence that
+# your search process is actually finding a better solution, not just
+# reciting one.
+#
+# As of writing, the currently-live one is:
+#   https://www.kaggle.com/competitions/playground-series-s6e7
+#   ("Predicting Student Health Risk")
+# Playground Series competitions rotate frequently, so check
+# https://www.kaggle.com/competitions?hostSegmentIdFilter=8 for whatever
+# is live when you actually run this, and update task_goal/data_dir below
+# to match — read that competition's own "Overview"/"Data" tab for the
+# exact target column and official metric, don't guess.
+#
+# Setup (same pattern as the other eval_*.yaml files):
+#   1. Join the competition on Kaggle, download train.csv and test.csv
+#      ONLY (no data_description.txt / sample_submission.csv).
+#   2. Put them in data/playground/train.csv and data/playground/test.csv.
+#   3. Fill in the <FILL IN> placeholders below from that competition's
+#      own overview page.
+#   4. Same caveat as eval_titanic.yaml/eval_house_prices.yaml: test.csv
+#      has no ground-truth target column, so task_goal tells the agent to
+#      self-report its metric from a held-out validation split of
+#      train.csv rather than a real leaderboard submission.
+#
+# Usage:
+#   python main.py --config configs/eval_playground.yaml
+
+exp_name: "eval_playground"
+data_dir: "data/playground"
+
+task_goal: >
+  Given <FILL IN: brief description of the feature columns, from the
+  competition's Data tab> in train.csv, train a model to predict
+  <FILL IN: the target column name and what it represents>. Hold out a
+  validation split from train.csv yourself to evaluate on (test.csv has
+  no ground-truth labels, so it cannot be used for scoring — only for
+  producing a final predictions file if you want one). The evaluation
+  metric is <FILL IN: the official metric named on the competition's
+  Overview/Evaluation tab, e.g. "Accuracy", "RMSE", "AUC"> on your
+  held-out validation split.
+
+llm:
+  # Using Claude instead of OpenAI here (see .env.example -- needs
+  # ANTHROPIC_API_KEY, not OPENAI_API_KEY). claude-haiku-4-5 is the
+  # cheap/fast tier, same role gpt-4o-mini plays for OpenAI, so cost per
+  # run should be comparable.
+  backend: "anthropic"
+  model: "claude-haiku-4-5"
+  max_tokens: 4096
+  temperature: 0.0
+  model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 8192
+
+agent:
+  steps: 15
+  reflection:
+    enabled: true
+    max_revisions: 1
+  search:
+    debug_prob: 0.5
+    num_drafts: 3
+    exploration_constant: 1.0
+
+interpreter:
+  # Playground Series datasets are usually synthetic and somewhat larger
+  # than Titanic/House Prices (tens of thousands of rows is common) —
+  # start at 300s and raise it if your first run times out on step 1's
+  # draft before you've even gotten a baseline reading.
+  timeout: 300
+  max_memory_mb: 4096
+  max_cpu_seconds: null
+  block_network: true

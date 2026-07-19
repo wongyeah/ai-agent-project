@@ -1,0 +1,63 @@
+# Evaluation run config #1: your own ML2025 homework task, re-run with a
+# real search budget instead of the single-draft smoke-test settings in
+# configs/config.yaml.
+#
+# Usage:
+#   python main.py --config configs/eval_ml2025_hw2.yaml
+#
+# This reuses the same data_dir/task_goal as configs/config.yaml (no need
+# to download anything new) — only agent.steps / search.num_drafts /
+# interpreter.timeout are changed, so this run is directly comparable
+# to the "single-shot LLM baseline" you'll write separately, and to the
+# other two eval_*.yaml runs.
+
+exp_name: "eval_ml2025_hw2"
+data_dir: "data/ML2025Spring-hw2-public"
+
+task_goal: >
+  Given the survey results from the past two days in a specific state in
+  the U.S., predict the probability of testing positive on day 3.
+  The evaluation metric is Mean Squared Error (MSE).
+
+llm:
+  # Using Claude instead of OpenAI here (see .env.example -- needs
+  # ANTHROPIC_API_KEY, not OPENAI_API_KEY). claude-haiku-4-5 is the
+  # cheap/fast tier, same role gpt-4o-mini plays for OpenAI, so cost per
+  # run should be comparable.
+  backend: "anthropic"
+  model: "claude-haiku-4-5"
+  max_tokens: 4096
+  temperature: 0.0
+  model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 8192
+
+agent:
+  # Was 1 in configs/config.yaml (a single draft, no real search). 15 gives
+  # the UCB1 search policy enough budget to actually explore/exploit
+  # across multiple branches — this is the number you'll plot metric-vs-
+  # step for.
+  steps: 15
+  reflection:
+    enabled: true
+    max_revisions: 1
+  search:
+    debug_prob: 0.5
+    # Was 1. With only one initial draft, every later step is forced to
+    # either debug or improve that single branch — UCB1 never actually
+    # gets to choose between competing branches. 3 initial drafts gives
+    # the search something real to explore, which matters if you want to
+    # later claim "UCB1 exploration helped" with a straight face.
+    num_drafts: 3
+    exploration_constant: 1.0
+
+interpreter:
+  # Was 3600 (1 hour) — way more than a single tabular-data script needs
+  # and would make a 15-step run impractically slow if any step hangs.
+  # 300s is generous headroom for pandas/sklearn on a small survey
+  # dataset; tighten further if your machine is fast and you want faster
+  # iteration.
+  timeout: 300
+  max_memory_mb: 4096
+  max_cpu_seconds: null
+  block_network: true

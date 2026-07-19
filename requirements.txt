@@ -13,6 +13,20 @@ psutil
 # OPENAI_API_KEY environment variable to be set.
 openai
 
+# Alternative cloud LLM backend: set llm.backend to "anthropic" in your
+# config.yaml to use Claude instead of OpenAI (e.g. if you don't have
+# OpenAI API credits). Requires the ANTHROPIC_API_KEY environment
+# variable to be set -- see .env.example. This is a separate API
+# credential from any claude.ai chat subscription.
+anthropic
+
+# Another alternative cloud LLM backend: set llm.backend to "coze" to use
+# a Coze (扣子, ByteDance) bot instead. Requires COZE_API_TOKEN and
+# COZE_BOT_ID -- see .env.example and CozeBackend's docstring in
+# src/llm/backend.py for the (different-from-the-above) setup this one
+# needs, including its free-tier call-count cap.
+cozepy
+
 # Optional, only needed if you switch llm.backend to "llama_cpp" in
 # configs/config.yaml to run a local GGUF model instead:
 # llama-cpp-python==0.3.4  (install with --extra-index-url for your CUDA version)
