@@ -346,7 +346,9 @@ class Interpreter:
                         psutil_trigger_time = time.time()
 
                 if psutil_limit_triggered is not None:
-                    if time.time() - psutil_trigger_time > 5:
+                    grace_expired = time.time() - psutil_trigger_time > 5
+                    child_already_dead = not self.process.is_alive()
+                    if grace_expired or child_already_dead:
                         self.cleanup_session()
                         state = (None, psutil_limit_triggered, {}, [])
                         exec_time = time.time() - start_time
@@ -384,7 +386,14 @@ class Interpreter:
                 output.append(self.result_outq.get(timeout=1))
             except queue.Empty:
                 continue
-        output.pop()
+        # On some platforms (notably Windows, where os.kill(pid, SIGINT)
+        # abruptly terminates the process instead of raising a catchable
+        # KeyboardInterrupt inside it, unlike POSIX), the child may be
+        # killed before it ever writes anything — including the "<|EOF|>"
+        # marker — to result_outq. Guard against popping an empty list in
+        # that case rather than assuming EOF was always written.
+        if output and output[-1] == "<|EOF|>":
+            output.pop()
 
         e_cls_name, exc_info, exc_stack = state[1:]
 
