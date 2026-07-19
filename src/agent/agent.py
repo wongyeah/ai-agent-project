@@ -17,7 +17,7 @@ from typing import Callable
 
 from src.agent.journal import Journal
 from src.agent.node import Node
-from src.agent.schemas import ExecutionEvaluation
+from src.agent.schemas import CodeReview, ExecutionEvaluation
 from src.interpreter.interpreter import ExecutionResult
 from src.llm.backend import LLMBackend
 from src.llm.structured import generate_structured
@@ -164,6 +164,71 @@ class Agent:
     def update_data_preview(self) -> None:
         self.data_preview = data_preview_generate(self.cfg.data_dir)
 
+    def _reflect_and_revise(self, node: Node) -> Node:
+        """
+        Pre-execution "critic" pass (the reflection step).
+
+        Reviews the node's plan + code for obvious problems before we
+        spend an execution budget on it. If the critic finds issues, we
+        ask the LLM to revise the code addressing that specific feedback,
+        for up to `reflection.max_revisions` rounds.
+
+        This is deliberately conservative about failure: if the
+        structured review call itself fails (bad JSON after retries), we
+        skip reflection for this round rather than blocking the pipeline
+        — reflection is meant to be a quality improvement, not a new
+        single point of failure.
+        """
+        reflection_cfg = getattr(self.cfg.agent, "reflection", None)
+        if reflection_cfg is None or not reflection_cfg.enabled:
+            return node
+
+        for _ in range(reflection_cfg.max_revisions):
+            system_prompt = (
+                "You are a meticulous code reviewer for a machine learning "
+                "task. Review the plan and code BEFORE it is executed. "
+                "Look for missing imports, code that won't run, logic that "
+                "clearly won't address the task, or a missing/incorrectly "
+                "named output submission file."
+            )
+            user_prompt = (
+                f"Task description: {self.cfg.task_goal}\n\n"
+                f"Plan: {node.plan}\n\n"
+                f"Code:\n{wrap_code(node.code)}"
+            )
+
+            try:
+                review = generate_structured(
+                    llm=self.llm,
+                    system_message=system_prompt,
+                    user_message=user_prompt,
+                    response_model=CodeReview,
+                )
+            except ValueError:
+                # Reflection is best-effort; don't block the pipeline if
+                # the critic call itself couldn't be parsed.
+                break
+
+            node.reflection = review.feedback
+
+            if not review.has_issues:
+                break
+
+            revise_system_prompt = "You are an AI agent revising your own code based on feedback."
+            revise_user_prompt = (
+                f"Task description: {self.cfg.task_goal}\n\n"
+                f"Your previous plan: {node.plan}\n\n"
+                f"Your previous code:\n{wrap_code(node.code)}\n\n"
+                f"A code reviewer gave this feedback:\n{review.feedback}\n\n"
+                "Please provide a revised plan and code that addresses this feedback."
+            )
+            plan, code = self.plan_and_code_query(revise_system_prompt, revise_user_prompt)
+            if code:
+                node.plan = plan
+                node.code = code
+
+        return node
+
     def step(self, exec_callback: ExecCallbackType) -> None:
         if not self.journal.nodes or self.data_preview is None:
             self.update_data_preview()
@@ -176,6 +241,8 @@ class Agent:
             result_node = self._debug(parent_node)
         else:
             result_node = self._improve(parent_node)
+
+        result_node = self._reflect_and_revise(result_node)
 
         self.parse_exec_result(
             node=result_node,

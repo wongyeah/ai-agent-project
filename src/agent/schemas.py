@@ -40,3 +40,29 @@ class ExecutionEvaluation(BaseModel):
             "judgement was made."
         )
     )
+
+
+class CodeReview(BaseModel):
+    """
+    A "critic" pass over a plan + code BEFORE it gets executed.
+
+    This is the reflection step: catching obvious problems (missing
+    imports, not saving the required output file, an approach that
+    clearly won't address the task) without spending an execution budget
+    to find out the hard way.
+    """
+
+    has_issues: bool = Field(
+        description=(
+            "True if you find any problems with this code that would "
+            "likely cause it to fail or produce an invalid/meaningless "
+            "result. False if the code looks reasonable and worth trying."
+        )
+    )
+    feedback: str = Field(
+        description=(
+            "If has_issues is True: a specific, actionable description of "
+            "what's wrong and what should change. If has_issues is False: "
+            "a brief (1 sentence) note on why the code looks fine."
+        )
+    )

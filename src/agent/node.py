@@ -44,6 +44,9 @@ class Node(DataClassJsonMixin):
     metric: float = field(default=None, kw_only=True)
     is_buggy: bool = field(default=None, kw_only=True)
 
+    # ---- reflection (pre-execution critique) ----
+    reflection: str | None = field(default=None, kw_only=True)
+
     def __post_init__(self) -> None:
         if self.parent is not None:
             self.parent.children.add(self)

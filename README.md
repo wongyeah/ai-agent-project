@@ -100,9 +100,11 @@ python -m pytest tests/
   the node's metric against how much its branch has already been
   explored (`Node.subtree_size` as a visit-count proxy), instead of
   always greedily picking the single best metric seen so far.
-- **Reflection step** (not yet done): add a "critic" LLM pass between
-  drafting and execution to catch obvious issues before spending an
-  execution budget.
+- ✅ **Reflection step**: a "critic" LLM pass (`Agent._reflect_and_revise`)
+  reviews the plan + code for obvious problems before execution, and can
+  trigger up to `reflection.max_revisions` rounds of self-revision — see
+  `src/agent/schemas.py::CodeReview`. Fails open (skips reflection rather
+  than crashing) if the critic's own response can't be parsed.
 - ✅ **Multi-backend LLM support** (partial): `src/llm/backend.py` now has
   a working `OpenAIBackend` (the default) alongside the local
   `LlamaCppBackend`. An `AnthropicBackend` stub is sketched in comments
