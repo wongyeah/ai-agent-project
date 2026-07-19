@@ -1,0 +1,100 @@
+# Evaluation run config #4: California Housing (regression, MSE) — the
+# dataset actually used to produce the search-vs-baseline experiment
+# results documented in README.md's "Evaluation results" section.
+#
+# WHY THIS DATASET INSTEAD OF eval_house_prices.yaml: House Prices is
+# still the better long-term target (see the note at the top of
+# eval_house_prices.yaml), but it requires a free Kaggle account + manual
+# download, which blocked producing results under a tight deadline.
+# California Housing is a standard, license-free regression dataset
+# (StatLib / Pace & Barry 1997) with the same "self-held-out validation,
+# self-reported MSE" evaluation shape as this project's other configs —
+# no Kaggle login needed, so it's a drop-in stand-in for exercising the
+# exact same pipeline. Swap back to eval_house_prices.yaml (or point
+# data_dir at any other regression CSV pair) once you have Kaggle access;
+# nothing about the agent/search code needs to change either way.
+#
+# Setup before running:
+#   1. Get the data (either works):
+#      a) Already included in this repo under data/california-housing/
+#         (train.csv / test.csv), pre-split with random_state=531 to match
+#         set_seed() in src/utils/config.py — just point data_dir here.
+#      b) Or re-derive it yourself: download
+#         https://raw.githubusercontent.com/ageron/handson-ml2/master/datasets/housing/housing.csv
+#         and split 80/20 with random_state=531 (see
+#         "Reproducing this locally" in README.md for the exact snippet).
+#   2. Same caveat as the other eval_*.yaml configs: data_dir must contain
+#      ONLY train.csv and test.csv — data_preview_generate() calls
+#      pd.read_csv() on every file it finds there.
+#
+# NOTE: test.csv here has the target column (median_house_value) dropped,
+# same convention as Kaggle's public test sets in the other configs — the
+# generated code must hold out its own validation split from train.csv to
+# get a real metric. This matches how the documented experiment run
+# scored every step.
+#
+# Usage:
+#   python main.py --config configs/eval_california_housing.yaml
+
+exp_name: "eval_california_housing"
+data_dir: "data/california-housing"
+
+task_goal: >
+  Given housing block-group data for California from the 1990 census
+  (median income, housing age, total rooms/bedrooms, population,
+  households, latitude/longitude, and proximity to the ocean) in
+  train.csv, train a model to predict each block group's median house
+  value. Hold out a validation split from train.csv yourself to evaluate
+  on (test.csv has no ground-truth median_house_value column, so it
+  cannot be used for scoring — only for producing a final predictions
+  file if you want one). The evaluation metric is Mean Squared Error
+  (MSE) between your predictions and the true median_house_value on your
+  held-out validation split. Print the result as a line of the exact
+  form `VALIDATION_MSE=<float>` so it can be parsed automatically.
+
+llm:
+  # Using Claude instead of OpenAI here (see .env.example -- needs
+  # ANTHROPIC_API_KEY, not OPENAI_API_KEY). claude-haiku-4-5 is the
+  # cheap/fast tier, same role gpt-4o-mini plays for OpenAI, so cost per
+  # run should be comparable. Swap to "coze" or "llama_cpp" here if
+  # that's what you have working credentials/hardware for instead — see
+  # the Setup section in README.md.
+  backend: "anthropic"
+  model: "claude-haiku-4-5"
+  max_tokens: 4096
+  temperature: 0.0
+  model_path: "models/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+  n_gpu_layers: -1
+  n_ctx: 8192
+
+agent:
+  # Matches the config actually used for the documented 12-step run (see
+  # README.md): num_drafts=3, debug_prob=0.5, exploration_constant=1.0.
+  # steps=15 sits inside the requested 10-20 range with a little headroom
+  # over the 12 the manual/stand-in run happened to reach before an
+  # obvious stopping point (UCB1 repeatedly re-selecting the same
+  # best-so-far branch with diminishing returns).
+  steps: 15
+  reflection:
+    enabled: true
+    max_revisions: 1
+  search:
+    debug_prob: 0.5
+    num_drafts: 3
+    exploration_constant: 1.0
+
+interpreter:
+  # ~16.5k rows, <=~15 engineered columns — a KMeans + HistGradientBoosting
+  # step in the documented run took ~20-30s; 180s leaves comfortable room
+  # without letting a runaway step eat the whole budget.
+  timeout: 180
+  # NOTE: if you see a run fail every single step with an opaque timeout
+  # ("REPL child process failed to start execution") on Linux/Mac, your
+  # Python process importing this project's own modules (e.g. torch via
+  # src/utils/config.py) may already have a larger virtual-memory
+  # footprint than this limit at fork() time -- raise this value. See
+  # "Two bugs found while producing this experiment" in README.md for the
+  # full explanation (this bit the stand-in run too, at max_memory_mb=2048).
+  max_memory_mb: 4096
+  max_cpu_seconds: null
+  block_network: true

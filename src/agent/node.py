@@ -30,7 +30,25 @@ class Node(DataClassJsonMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex, kw_only=True)
     ctime: float = field(default_factory=lambda: time.time(), kw_only=True)
     parent: Optional["Node"] = field(default=None, kw_only=True)
-    children: set["Node"] = field(default_factory=set, kw_only=True)
+
+    # `children` is deliberately NOT a dataclass field (no class-level
+    # annotation below — it's set as a plain instance attribute in
+    # __post_init__ instead). Reasoning: since `parent` IS a dataclass
+    # field, a `children` field would make to_dict() recurse
+    # parent -> children -> parent -> children -> ... forever the moment
+    # any node has both a parent and at least one child (i.e. from the
+    # very first debug/improve node onward) — dataclasses_json's `_asdict`
+    # walks every `dataclasses.fields()` entry before it ever applies an
+    # `exclude=` filter, so marking the field excluded does NOT stop the
+    # infinite recursion, it only hides it from the *output* after the
+    # (already-infinite) walk. `journal.to_dict()` (what main.py's
+    # save_run() calls after EVERY step) hit RecursionError on any tree
+    # deeper than one level as a result — keeping `children` out of
+    # `dataclasses.fields()` entirely is what actually avoids the cycle,
+    # since dataclasses_json only ever iterates real dataclass fields.
+    # No information is lost: `children` is fully reconstructable from
+    # the other nodes' `parent` pointers, which is exactly what
+    # Journal.from_dict() does after loading (see journal.py).
 
     # ---- execution info ----
     _term_out: list[str] = field(default=None, kw_only=True)
@@ -48,6 +66,7 @@ class Node(DataClassJsonMixin):
     reflection: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
+        self.children: set["Node"] = set()
         if self.parent is not None:
             self.parent.children.add(self)
 
