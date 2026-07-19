@@ -4,9 +4,6 @@ An LLM-driven agent that autonomously drafts, executes, debugs, and
 iteratively improves Python solutions to a machine learning task —
 inspired by [AIDE: AI-Driven Exploration in the Space of Code](https://arxiv.org/pdf/2502.13138).
 
-Originally built as a course assignment (NTU ML 2025 Spring, HW2); this repo
-is a refactor of that assignment into a modular, backend-agnostic project,
-used here as the basis for further AI-agent-focused improvements.
 
 ## What it does
 
@@ -119,9 +116,3 @@ python -m pytest tests/
   dependency-light layer of defense for a local/Colab environment — see
   `src/interpreter/interpreter.py` for the full design notes and the
   trade-offs between the two enforcement layers.
-
-## Credit
-
-Core execution/search scaffolding adapted from the
-[AIDE](https://arxiv.org/pdf/2502.13138) project, as provided in the
-NTU ML 2025 Spring HW2 course template.
