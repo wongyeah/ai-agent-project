@@ -7,6 +7,7 @@ torch
 pyyaml
 pydantic
 python-dotenv
+psutil
 
 # Cloud LLM backend (default, see src/llm/backend.py). Requires the
 # OPENAI_API_KEY environment variable to be set.

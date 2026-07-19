@@ -109,15 +109,16 @@ python -m pytest tests/
   a working `OpenAIBackend` (the default) alongside the local
   `LlamaCppBackend`. An `AnthropicBackend` stub is sketched in comments
   for anyone wanting to add it.
-- ✅ **Sandbox hardening**: the `Interpreter` now enforces a memory cap
-  (`RLIMIT_AS`) and an optional CPU-time cap (`RLIMIT_CPU`, via a
-  `SIGXCPU` handler that turns into a clean `ResourceLimitExceeded`
-  exception rather than an abrupt kill) on POSIX systems, plus best-effort
-  network blocking (monkeypatches `socket.socket` in the child process).
-  Not a substitute for real container isolation in production, but a
-  meaningful, dependency-free layer of defense for a local/Colab
-  environment — see `src/interpreter/interpreter.py` for the platform
-  caveats (POSIX-only for the resource limits).
+- ✅ **Sandbox hardening**: the `Interpreter` enforces a memory cap and an
+  optional CPU-time cap via two layers: fast POSIX kernel limits
+  (`RLIMIT_AS`/`RLIMIT_CPU`) on Linux/Mac, and a cross-platform `psutil`-
+  based polling monitor that also works on Windows (toggle via
+  `use_resource_limits`). Plus best-effort network blocking
+  (monkeypatches `socket.socket` in the child process). Not a substitute
+  for real container isolation in production, but a meaningful,
+  dependency-light layer of defense for a local/Colab environment — see
+  `src/interpreter/interpreter.py` for the full design notes and the
+  trade-offs between the two enforcement layers.
 
 ## Credit
 

@@ -14,11 +14,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.interpreter.interpreter import Interpreter
+from src.interpreter.interpreter import _HAS_PSUTIL, Interpreter
 
 posix_only = pytest.mark.skipif(
     sys.platform == "win32",
     reason="memory/CPU resource limits use the POSIX-only `resource` module",
+)
+requires_psutil = pytest.mark.skipif(
+    not _HAS_PSUTIL, reason="psutil is not installed"
 )
 
 
@@ -100,3 +103,55 @@ def test_memory_limit_blocks_huge_allocation():
     interp.cleanup_session()
 
     assert result.exc_type == "MemoryError"
+
+
+@requires_psutil
+def test_psutil_cpu_limit_works_without_resource_module():
+    """
+    Cross-platform check: with use_resource_limits=False, the POSIX
+    `resource` module's kernel-level limits are disabled entirely, so this
+    exercises the same psutil-based polling path that Windows relies on
+    (this test runs and passes on Windows too, unlike the posix_only ones
+    above).
+    """
+    interp = Interpreter(
+        timeout=30,
+        block_network=False,
+        max_memory_mb=None,
+        max_cpu_seconds=1,
+        use_resource_limits=False,
+        poll_interval_seconds=0.2,
+    )
+    result = interp.run("while True:\n    pass\n")
+    interp.cleanup_session()
+
+    assert result.exc_type == "CPUTimeLimitExceeded"
+
+
+@requires_psutil
+def test_psutil_memory_limit_works_without_resource_module():
+    """
+    Same cross-platform path as above, but for memory. Uses code that
+    grows memory gradually (rather than one huge allocation) so the
+    ~0.2s polling interval has multiple chances to catch it before the
+    snippet would naturally finish on its own.
+    """
+    interp = Interpreter(
+        timeout=30,
+        block_network=False,
+        max_memory_mb=200,
+        max_cpu_seconds=None,
+        use_resource_limits=False,
+        poll_interval_seconds=0.2,
+    )
+    code = (
+        "import time\n"
+        "data = []\n"
+        "for _ in range(100):\n"
+        "    data.append(bytearray(50 * 1024 * 1024))\n"
+        "    time.sleep(0.1)\n"
+    )
+    result = interp.run(code)
+    interp.cleanup_session()
+
+    assert result.exc_type == "MemoryLimitExceeded"
