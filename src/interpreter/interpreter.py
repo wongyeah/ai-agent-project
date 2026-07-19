@@ -14,32 +14,53 @@ Sandbox hardening (on top of plain process isolation):
     - CPU time limit (RLIMIT_CPU, POSIX only): the OS sends SIGXCPU past
       this, which we catch via a signal handler and turn into a clean
       ResourceLimitExceeded exception instead of an abrupt process kill.
-    - Cross-platform polling monitor (psutil, works on Windows too): the
+    - Windows Job Object limits (win32 only, see
+      `src/interpreter/win_job_object.py`): a kernel-level, independent
+      counterpart to the two POSIX mechanisms above — not a variant of
+      the psutil poller. Memory is enforced via
+      JOB_OBJECT_LIMIT_PROCESS_MEMORY (allocations past the limit fail
+      immediately, the same way RLIMIT_AS does — no polling involved).
+      CPU time is enforced via JOB_OBJECT_LIMIT_PROCESS_TIME, with a
+      background thread blocking on an I/O completion port for the
+      kernel's exceeded-limit notification (event-driven, not sampled).
+      This is deliberately a second, platform-specific branch living
+      alongside the POSIX one rather than a shared abstraction — see the
+      module docstring in `win_job_object.py` for why that trade-off was
+      made on purpose.
+    - Cross-platform polling monitor (psutil, works everywhere): the
       parent process periodically checks the child's memory/CPU usage
-      (piggybacking on the same 1-second polling loop already used for
+      (piggybacking on the same ~1-second polling loop already used for
       the wall-clock timeout) and force-kills it if it exceeds the
-      configured limits. This is slower to react (up to ~1s lag) than the
-      POSIX kernel-level limits above, since it's "check and kill" rather
-      than "the kernel refuses the allocation outright" — but it's the
-      only mechanism of the two that works on Windows, where the
-      `resource` module doesn't exist at all.
+      configured limits. This is slower to react (up to ~poll_interval
+      lag) than either kernel-level mechanism above, since it's "check
+      and kill" rather than "the kernel refuses/terminates outright" — it
+      now serves purely as a fallback belt-and-suspenders layer, not as
+      Windows' primary enforcement path.
     - Best-effort network blocking: monkeypatches `socket.socket` inside
       the child process so any attempt to open a network connection
       raises immediately, rather than silently phoning home.
 
-Which layers are active:
-    - `use_resource_limits=True` (default) + running on POSIX: the fast
-      kernel-level limits above are enforced, IN ADDITION to the psutil
-      poller (belt-and-suspenders — the kernel limit will almost always
-      trigger first for memory, since it's instant).
-    - `use_resource_limits=False`, or running on Windows (where
-      `resource` doesn't exist regardless of this flag): only the psutil
-      poller enforces `max_memory_mb`/`max_cpu_seconds`.
+Which layers are active, per platform:
+    - POSIX (Linux/Mac), `use_resource_limits=True` (default): the fast
+      RLIMIT_AS/RLIMIT_CPU kernel limits are enforced, IN ADDITION to the
+      psutil poller (belt-and-suspenders — the kernel limit will almost
+      always trigger first, since it's instant).
+    - POSIX, `use_resource_limits=False`: only the psutil poller enforces
+      `max_memory_mb`/`max_cpu_seconds`.
+    - Windows, `use_job_object_limits=True` (default) and the Job Object
+      was created/attached successfully: the kernel-level Job Object
+      limits above are the primary enforcement mechanism, with the
+      psutil poller still running underneath as a fallback (e.g. in case
+      job-object creation is denied by policy on some locked-down
+      machine, or attaching otherwise fails at runtime).
+    - Windows, `use_job_object_limits=False`, or Job Object setup failed
+      at runtime: falls back to psutil-only enforcement (the previous
+      Windows behavior).
 
 Platform note: `resource.setrlimit` is POSIX-only (Linux/Mac) — it does not
-exist on Windows. On Windows, the psutil-based poller (see above) takes
-over enforcement of `max_memory_mb`/`max_cpu_seconds` automatically; no
-extra configuration is needed.
+exist on Windows. Job Objects are the Windows-native equivalent used here;
+no extra configuration is needed to benefit from them beyond running on a
+Windows version/policy that allows job-object creation.
 
 None of this is a substitute for real container-level isolation (e.g.
 gVisor, Docker with --network=none and cgroup limits) in a production
@@ -73,6 +94,19 @@ try:
     _HAS_PSUTIL = True
 except ImportError:  # pragma: no cover - only if psutil isn't installed
     _HAS_PSUTIL = False
+
+_HAS_WIN_JOB_OBJECT = False
+if sys.platform == "win32":
+    try:
+        from src.interpreter.win_job_object import WindowsJobObjectLimiter
+
+        _HAS_WIN_JOB_OBJECT = True
+    except (ImportError, OSError, AttributeError):  # pragma: no cover
+        # Job Objects should be available on any Windows this project
+        # targets, but fail closed (fall back to psutil) rather than
+        # crash the whole interpreter if the ctypes bindings ever don't
+        # load on some exotic Windows configuration.
+        _HAS_WIN_JOB_OBJECT = False
 
 
 class ResourceLimitExceeded(Exception):
@@ -160,6 +194,7 @@ class Interpreter:
         max_cpu_seconds: int | None = None,
         block_network: bool = True,
         use_resource_limits: bool = True,
+        use_job_object_limits: bool = True,
         poll_interval_seconds: float = 1.0,
     ):
         self.timeout = timeout
@@ -168,24 +203,38 @@ class Interpreter:
         self.max_cpu_seconds = max_cpu_seconds
         self.block_network = block_network
         self.use_resource_limits = use_resource_limits
+        self.use_job_object_limits = use_job_object_limits
         self.poll_interval_seconds = poll_interval_seconds
         self.process: Process | None = None
+        self._win_job_limiter: "WindowsJobObjectLimiter | None" = None
 
         wants_limits = max_memory_mb is not None or max_cpu_seconds is not None
         posix_limits_active = use_resource_limits and _HAS_RESOURCE
+        job_object_active = (
+            sys.platform == "win32" and use_job_object_limits and _HAS_WIN_JOB_OBJECT
+        )
+        self._job_object_enforcement_active = job_object_active and wants_limits
 
-        if wants_limits and not posix_limits_active and not _HAS_PSUTIL:
+        if wants_limits and not posix_limits_active and not job_object_active and not _HAS_PSUTIL:
             print(
-                "Warning: memory/CPU limits were requested, but neither the "
-                "POSIX `resource` module nor `psutil` is available, so no "
-                "limits will be enforced. Install psutil for cross-platform "
-                "enforcement (pip install psutil)."
+                "Warning: memory/CPU limits were requested, but no "
+                "enforcement mechanism (POSIX `resource`, Windows Job "
+                "Objects, or `psutil`) is available, so no limits will be "
+                "enforced. Install psutil for cross-platform enforcement "
+                "(pip install psutil)."
+            )
+        elif wants_limits and self._job_object_enforcement_active:
+            print(
+                "Note: enforcing memory/CPU limits via Windows Job Objects "
+                "(kernel-level; see src/interpreter/win_job_object.py), "
+                "with the psutil poller kept running as a fallback."
             )
         elif wants_limits and not posix_limits_active:
             print(
                 "Note: enforcing memory/CPU limits via the cross-platform "
                 "psutil poller (checked roughly every "
-                f"{poll_interval_seconds}s) rather than POSIX kernel limits."
+                f"{poll_interval_seconds}s) rather than a kernel-level "
+                "mechanism."
             )
 
     def child_proc_setup(self, result_outq: Queue) -> None:
@@ -245,7 +294,31 @@ class Interpreter:
         )
         self.process.start()
 
+        if self._job_object_enforcement_active:
+            # Attach *before* any code is handed to the child (it blocks
+            # on code_inq.get() first, see _run_session), so no untrusted
+            # code ever runs outside the job's limits — see the race-
+            # condition note in win_job_object.py's module docstring for
+            # why this ordering matters.
+            limiter = WindowsJobObjectLimiter(
+                max_memory_mb=self.max_memory_mb, max_cpu_seconds=self.max_cpu_seconds
+            )
+            try:
+                limiter.attach(self.process.pid)
+                self._win_job_limiter = limiter
+            except OSError as e:
+                print(
+                    f"Warning: failed to attach Windows Job Object limits "
+                    f"({e}); falling back to psutil polling for this run."
+                )
+                limiter.close()
+                self._win_job_limiter = None
+
     def cleanup_session(self) -> None:
+        if self._win_job_limiter is not None:
+            self._win_job_limiter.close()
+            self._win_job_limiter = None
+
         if self.process is None:
             return
         try:
@@ -295,6 +368,22 @@ class Interpreter:
             pass
         return None
 
+    def _job_object_limits_exceeded(self) -> str | None:
+        """
+        Non-blocking check of the Windows Job Object limiter, if one is
+        attached to the current child process. Unlike
+        `_psutil_limits_exceeded`, this doesn't sample anything itself —
+        it just reads a flag that the limiter's background thread already
+        set the instant the kernel posted a limit-exceeded notification
+        (see win_job_object.py). Memory limit violations never reach here
+        at all: they fail the child's own allocation call directly (kernel
+        enforced, like RLIMIT_AS), surfacing as an ordinary MemoryError
+        that the child reports through the normal state:finished path.
+        """
+        if self._win_job_limiter is None:
+            return None
+        return self._win_job_limiter.limit_exceeded()
+
     def run(self, code: str, reset_session: bool = True) -> ExecutionResult:
         """Execute the given Python code in a subprocess and return the result."""
         if reset_session:
@@ -319,8 +408,9 @@ class Interpreter:
         start_time = time.time()
 
         child_in_overtime = False
-        psutil_limit_triggered: str | None = None
-        psutil_trigger_time: float | None = None
+        limit_triggered: str | None = None
+        limit_trigger_time: float | None = None
+        limit_source: str | None = None  # "job_object" | "psutil", for the report text below
 
         while True:
             try:
@@ -332,25 +422,46 @@ class Interpreter:
                 if not child_in_overtime and not self.process.is_alive():
                     raise RuntimeError("REPL child process died unexpectedly") from None
 
-                if psutil_limit_triggered is None:
-                    psutil_limit_triggered = self._psutil_limits_exceeded()
-                    if psutil_limit_triggered is not None:
+                if limit_triggered is None:
+                    # Check the Windows Job Object limiter first: it's
+                    # event-driven (the kernel already posted the
+                    # notification the instant the limit was crossed), so
+                    # it should always beat psutil's next scheduled
+                    # sample. Falls through to psutil automatically when
+                    # no job object is attached (returns None).
+                    limit_triggered = self._job_object_limits_exceeded()
+                    if limit_triggered is not None:
+                        limit_source = "job_object"
+                    else:
+                        limit_triggered = self._psutil_limits_exceeded()
+                        if limit_triggered is not None:
+                            limit_source = "psutil"
+
+                    if limit_triggered is not None:
                         # Same graceful approach as the timeout handling
                         # below: send SIGINT first so the child's own
                         # exec()/except block catches it and goes through
                         # its normal EOF-writing shutdown, rather than
                         # forcibly killing it from the parent (which would
                         # leave the output queue without an EOF marker).
-                        os.kill(self.process.pid, signal.SIGINT)
+                        # If the trigger came from a Job Object CPU-time
+                        # limit, the kernel has typically already
+                        # terminated the child by this point, in which
+                        # case this just becomes a no-op on an
+                        # already-gone pid.
+                        try:
+                            os.kill(self.process.pid, signal.SIGINT)
+                        except OSError:
+                            pass
                         child_in_overtime = True
-                        psutil_trigger_time = time.time()
+                        limit_trigger_time = time.time()
 
-                if psutil_limit_triggered is not None:
-                    grace_expired = time.time() - psutil_trigger_time > 5
+                if limit_triggered is not None:
+                    grace_expired = time.time() - limit_trigger_time > 5
                     child_already_dead = not self.process.is_alive()
                     if grace_expired or child_already_dead:
                         self.cleanup_session()
-                        state = (None, psutil_limit_triggered, {}, [])
+                        state = (None, limit_triggered, {}, [])
                         exec_time = time.time() - start_time
                         break
                     continue
@@ -359,7 +470,10 @@ class Interpreter:
                     continue
                 running_time = time.time() - start_time
                 if running_time > self.timeout:
-                    os.kill(self.process.pid, signal.SIGINT)
+                    try:
+                        os.kill(self.process.pid, signal.SIGINT)
+                    except OSError:
+                        pass
                     child_in_overtime = True
 
                     if running_time > self.timeout + 5:
@@ -368,14 +482,14 @@ class Interpreter:
                         exec_time = self.timeout
                         break
 
-        # If the psutil poller is what triggered the SIGINT that stopped
-        # this run, relabel whatever the child reported (it may say
-        # "KeyboardInterrupt", or "TimeoutError" — the child's own except
-        # block unconditionally renames KeyboardInterrupt to TimeoutError,
-        # which is only correct for the wall-clock-timeout case) with the
-        # real cause.
-        if psutil_limit_triggered is not None:
-            state = (state[0], psutil_limit_triggered, state[2], state[3])
+        # If the job-object/psutil monitor is what triggered the SIGINT
+        # that stopped this run, relabel whatever the child reported (it
+        # may say "KeyboardInterrupt", or "TimeoutError" — the child's own
+        # except block unconditionally renames KeyboardInterrupt to
+        # TimeoutError, which is only correct for the wall-clock-timeout
+        # case) with the real cause.
+        if limit_triggered is not None:
+            state = (state[0], limit_triggered, state[2], state[3])
 
         output: list[str] = []
         start_collect = time.time()
@@ -397,6 +511,11 @@ class Interpreter:
 
         e_cls_name, exc_info, exc_stack = state[1:]
 
+        detection_note = {
+            "job_object": "detected via the Windows Job Object kernel notification",
+            "psutil": "detected via psutil polling",
+        }.get(limit_source, "detected via psutil polling")
+
         if e_cls_name == "TimeoutError":
             output.append(
                 f"TimeoutError: Execution exceeded the time limit of "
@@ -405,12 +524,12 @@ class Interpreter:
         elif e_cls_name == "MemoryLimitExceeded":
             output.append(
                 f"MemoryLimitExceeded: process exceeded the {self.max_memory_mb}MB "
-                "memory limit (detected via psutil polling)."
+                f"memory limit ({detection_note})."
             )
         elif e_cls_name == "CPUTimeLimitExceeded":
             output.append(
                 f"CPUTimeLimitExceeded: process exceeded the {self.max_cpu_seconds}s "
-                "CPU time limit (detected via psutil polling)."
+                f"CPU time limit ({detection_note})."
             )
         else:
             output.append(

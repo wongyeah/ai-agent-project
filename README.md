@@ -107,12 +107,19 @@ python -m pytest tests/
   `LlamaCppBackend`. An `AnthropicBackend` stub is sketched in comments
   for anyone wanting to add it.
 - ✅ **Sandbox hardening**: the `Interpreter` enforces a memory cap and an
-  optional CPU-time cap via two layers: fast POSIX kernel limits
-  (`RLIMIT_AS`/`RLIMIT_CPU`) on Linux/Mac, and a cross-platform `psutil`-
-  based polling monitor that also works on Windows (toggle via
-  `use_resource_limits`). Plus best-effort network blocking
-  (monkeypatches `socket.socket` in the child process). Not a substitute
-  for real container isolation in production, but a meaningful,
-  dependency-light layer of defense for a local/Colab environment — see
-  `src/interpreter/interpreter.py` for the full design notes and the
-  trade-offs between the two enforcement layers.
+  optional CPU-time cap via three layers: fast POSIX kernel limits
+  (`RLIMIT_AS`/`RLIMIT_CPU`) on Linux/Mac (toggle via
+  `use_resource_limits`); native Windows kernel limits via Job Objects
+  (`JOB_OBJECT_LIMIT_PROCESS_MEMORY` / `JOB_OBJECT_LIMIT_PROCESS_TIME`,
+  see `src/interpreter/win_job_object.py`, toggle via
+  `use_job_object_limits`); and a cross-platform `psutil`-based polling
+  monitor that works everywhere and now serves as the fallback layer
+  rather than Windows' primary mechanism. Plus best-effort network
+  blocking (monkeypatches `socket.socket` in the child process). Not a
+  substitute for real container isolation in production, but a
+  meaningful, dependency-light layer of defense for a local/Colab
+  environment — see `src/interpreter/interpreter.py` for the full design
+  notes and the trade-offs between the three enforcement layers, and
+  `src/interpreter/win_job_object.py` for why the Windows branch is a
+  deliberately independent, kernel-level implementation rather than a
+  variant of the psutil poller.
