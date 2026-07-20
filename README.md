@@ -278,11 +278,6 @@ ahead of the no-search baseline.
 
 ## Reproducing this locally
 
-Everything above can be reproduced with real LLM API calls (this project's
-actual, unmodified pipeline) instead of the Claude-as-stand-in method
-used to produce the numbers above. Here's the full software environment
-and step-by-step process.
-
 ### 1. Software environment
 
 - Python 3.10+ (3.11 was used for the run above)
