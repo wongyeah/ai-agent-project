@@ -6,6 +6,7 @@ numpy
 torch
 pyyaml
 pydantic
+pydantic-settings   # Config's env-var-override support (src/utils/config.py)
 python-dotenv
 psutil
 

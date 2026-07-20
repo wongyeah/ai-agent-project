@@ -10,6 +10,12 @@ models/
 # run outputs
 runs/
 
+# transient scratch file the Interpreter's child process writes generated
+# code to at runtime (src/interpreter/interpreter.py's agent_file_name) --
+# a stray copy at the repo root was accidentally committed once; this
+# stops that from happening again.
+runfile.py
+
 # python
 __pycache__/
 *.pyc

@@ -36,10 +36,12 @@ ai-agent-project/
 │   ├── interpreter/
 │   │   └── interpreter.py  # sandboxed subprocess code execution
 │   └── utils/
-│       ├── text_processing.py  # code/JSON extraction from LLM output
-│       ├── data_preview.py     # lightweight dataset summaries for prompts
-│       └── config.py           # dict -> dot-access config object
-├── main.py                 # CLI entry point
+│       ├── text_processing.py   # code/JSON extraction from LLM output
+│       ├── data_preview.py      # lightweight dataset summaries for prompts
+│       ├── config.py            # validated, env-overridable run config (pydantic-settings)
+│       └── journal_encoder.py   # explicit JSON encoder for checkpoint files
+├── main.py                 # CLI entry point (supports --fresh to skip auto-resume)
+├── scripts/                 # standalone tools: one-shot baseline, trajectory plotting
 ├── tests/                  # unit tests (no GPU/LLM required)
 └── requirements.txt
 ```
@@ -88,11 +90,68 @@ in GGUF format), and point `llm.model_path` at it.
 Put your task's train/test CSVs under `data/` and point `data_dir` in the
 config at that folder.
 
+## Configuration
+
+`configs/*.yaml` files are validated against a real schema
+(`src/utils/config.py`'s `Config`, built on `pydantic-settings`) instead
+of being loaded as a loose dict — a typo'd or misplaced key (e.g.
+`agent.serach.debug_prob`) is a load-time `ValidationError`, not a
+silent no-op that only surfaces as an `AttributeError` deep inside a run
+after LLM calls have already happened. Value ranges are checked too
+(`debug_prob` must be in `[0, 1]`, `timeout`/`max_memory_mb` must be
+positive, `llm.backend` must be one of the four known backends, etc.),
+and a missing `llm.model`/`llm.model_path` for whichever backend you
+selected is caught before `main.py` ever constructs that backend's
+client.
+
+Any field can also be overridden from the shell without editing the
+YAML file, using the `AIAGENT_` prefix and `__` as the nesting
+delimiter — env vars win over whatever the YAML file says:
+
+```bash
+AIAGENT_AGENT__STEPS=5 python main.py --config configs/eval_titanic.yaml
+AIAGENT_LLM__BACKEND=anthropic AIAGENT_LLM__MODEL=claude-haiku-4-5 python main.py --config configs/config.yaml
+```
+
+This is separate from API keys (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/
+etc.), which are still loaded via `.env` as described above — "which
+task/model to run" config and "how to authenticate" secrets are kept on
+two different paths on purpose.
+
 ## Run
 
 ```bash
 python main.py --config configs/config.yaml
 ```
+
+Every step's result is checkpointed to `runs/<exp_name>_journal.json`
+(plus a small `runs/<exp_name>_meta.json` fingerprint) as soon as it
+completes. If you re-run the exact same command later — after an
+interruption, a crash, or just deliberately stopping and picking it back
+up — `main.py` automatically loads that checkpoint and continues from
+wherever it left off instead of re-spending LLM calls (and API budget)
+on steps that already finished:
+
+```bash
+python main.py --config configs/eval_california_housing.yaml
+# ... runs steps 0-7, then you Ctrl-C or it crashes ...
+python main.py --config configs/eval_california_housing.yaml
+# "Resumed 8 previous step(s) for 'eval_california_housing' from runs/..." — continues at step 8
+```
+
+Pass `--fresh` to ignore any existing checkpoint and start over (this
+overwrites the old checkpoint files on the first save of the new run):
+
+```bash
+python main.py --config configs/eval_california_housing.yaml --fresh
+```
+
+If the checkpoint's recorded `data_dir`/`task_goal` don't match the
+config you just pointed `--config` at (e.g. you reused an `exp_name` for
+a genuinely different task by accident), you'll get a `WARNING` printed
+instead of silently resuming UCB1 search state built for the wrong
+problem — the run still proceeds (it's a warning, not a hard block), but
+you'll notice before wasting a run on it.
 
 ## Test
 
@@ -380,3 +439,38 @@ a real run, since it's the same unmodified code either way.
   `src/interpreter/win_job_object.py` for why the Windows branch is a
   deliberately independent, kernel-level implementation rather than a
   variant of the psutil poller.
+- ✅ **Checkpoint/resume support** (`main.py`'s `load_or_create_journal`):
+  running the same `--config` again after an interruption or crash picks
+  up automatically from `runs/<exp_name>_journal.json` instead of
+  starting over — no separate "steps completed" counter needed, since
+  `len(journal)` already is that count. A small `<exp_name>_meta.json`
+  sidecar fingerprints `data_dir`/`task_goal` at save time so an
+  accidental `exp_name` reuse across two different tasks prints a
+  warning instead of silently resuming search state for the wrong
+  problem. `--fresh` opts out and starts clean. See "Run" above.
+- ✅ **Validated, env-overridable configuration** (`src/utils/config.py`):
+  replaced a loose dict-with-attribute-access wrapper with a
+  `pydantic-settings`-based schema — type/range checking and
+  `extra="forbid"` at every nesting level catch a typo'd or out-of-range
+  config value at load time (before any LLM call) instead of an
+  `AttributeError` surfacing mid-run; any field can be overridden from
+  the shell (`AIAGENT_AGENT__STEPS=5 python main.py ...`) without editing
+  the YAML file. `OmegaConf` was the other option considered — pydantic
+  was the better fit since this project loads one YAML file per run
+  rather than composing multiple config layers, and it was already a
+  dependency. See "Configuration" above.
+- ✅ **Explicit checkpoint serialization** (`src/utils/journal_encoder.py`):
+  replaced `json.dump(..., default=str)` — which silently stringifies
+  *anything* the standard `json` module doesn't recognize, including a
+  type that should stay numeric (e.g. a `numpy.float64` metric slipping
+  in from unwrapped sklearn output would silently become the *string*
+  `"1903868428.9"` on disk, breaking every numeric comparison after a
+  reload with no warning anywhere) — with a small custom
+  `JournalJSONEncoder`: exact conversions for the specific types that
+  could plausibly show up (numpy scalars via `.item()`, `Decimal`), and
+  a *logged warning* (not a silent pass) for anything else. Audited
+  against this codebase's actual current data (see the module's
+  docstring): nothing today actually hits the fallback path — this is
+  deliberate defense-in-depth, not a fix for an active bug, and
+  `tests/test_journal_encoder.py` pins that invariant so a future
+  regression fails a test instead of corrupting a checkpoint silently.

@@ -33,6 +33,8 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -41,21 +43,23 @@ from src.agent.journal import Journal  # noqa: E402
 from src.agent.node import Node  # noqa: E402
 from src.interpreter.interpreter import Interpreter  # noqa: E402
 from src.utils.config import Config  # noqa: E402
+from src.utils.journal_encoder import JournalJSONEncoder  # noqa: E402
 
 JOURNAL_PATH = PROJECT_ROOT / "runs" / "eval_california_housing_journal.json"
 DATA_DIR = PROJECT_ROOT / "data" / "california-housing"
 
-SEARCH_CFG = Config(
-    {
-        "agent": {
-            "search": {
-                "num_drafts": 3,
-                "debug_prob": 0.5,
-                "exploration_constant": 1.0,
-            }
-        }
-    }
-)
+# Loaded from the real config file (rather than a hand-rolled partial
+# dict) for two reasons: (1) Config is now a strict, validated schema
+# with task_goal/data_dir/llm/interpreter as real fields -- a
+# hand-rolled dict with only `agent.search` set would either fail
+# validation (task_goal has no default) or silently drift out of sync
+# with what configs/eval_california_housing.yaml actually specifies;
+# (2) this also removes a duplication risk that existed before: the old
+# hand-rolled dict's search params had to be kept in sync with that YAML
+# file BY HAND, with no guarantee they stayed identical. Loading the file
+# directly makes that impossible to get out of sync.
+with open(PROJECT_ROOT / "configs" / "eval_california_housing.yaml") as f:
+    SEARCH_CFG = Config(yaml.safe_load(f))
 
 
 def load_journal() -> Journal:
@@ -65,7 +69,7 @@ def load_journal() -> Journal:
 
 
 def save_journal(journal: Journal) -> None:
-    JOURNAL_PATH.write_text(json.dumps(journal.to_dict(), indent=2, default=str))
+    JOURNAL_PATH.write_text(json.dumps(journal.to_dict(), indent=2, cls=JournalJSONEncoder))
 
 
 def get_agent(journal: Journal) -> Agent:

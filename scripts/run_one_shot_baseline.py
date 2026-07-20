@@ -39,6 +39,7 @@ from src.agent.agent import Agent  # noqa: E402
 from src.agent.journal import Journal  # noqa: E402
 from src.interpreter.interpreter import Interpreter  # noqa: E402
 from src.utils.config import Config, set_seed  # noqa: E402
+from src.utils.journal_encoder import JournalJSONEncoder  # noqa: E402
 
 
 def main() -> None:
@@ -94,7 +95,7 @@ def main() -> None:
             },
             f,
             indent=2,
-            default=str,
+            cls=JournalJSONEncoder,
         )
     print(f"Saved baseline result to {out_path}")
 
