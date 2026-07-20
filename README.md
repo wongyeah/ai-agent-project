@@ -308,7 +308,7 @@ and step-by-step process.
 - Copy `.env.example` to `.env` and fill in whichever key you're using:
   `cp .env.example .env`
 
-### 2. Run the real search (replaces the Claude-as-stand-in driver)
+### 2. Run the real search
 
 ```bash
 python main.py --config configs/eval_california_housing.yaml
@@ -358,14 +358,6 @@ and the one-shot baseline as a horizontal reference line. Pass
 top of that script, and the `_node_value` limitation above, before doing
 that.
 
-### 5. Update this README
-
-Re-run the numbers above (trajectory table, baseline comparison, plot)
-with your new results, and update the "Methodology, stated plainly"
-section to say you used a real LLM backend instead of the Claude
-stand-in — everything else in that section (UCB1 search policy, real
-Interpreter execution, real Journal bookkeeping) is already accurate for
-a real run, since it's the same unmodified code either way.
 
 ## Known limitations / roadmap
 
